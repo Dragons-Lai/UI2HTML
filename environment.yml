@@ -1,0 +1,33 @@
+name: ui2html
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip=23.1.2
+  - pytorch=2.0.1
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=11.8
+  - cudatoolkit=11.8
+  - pip:
+    - bitsandbytes==0.45.5
+    - transformers==4.45.1
+    - datasets==3.0.1
+    - accelerate==0.34.2
+    - evaluate==0.4.3
+    - trl==0.11.1
+    - peft==0.13.0
+    - qwen-vl-utils
+    - pillow
+    - tensorboard
+    - scikit-learn
+    - pandas
+    - matplotlib
+    - imgkit
+    - huggingface_hub
+    - triton==3.2.0
+    - xformers
+    - qwen_vl_utils
