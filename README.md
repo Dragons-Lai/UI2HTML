@@ -70,6 +70,7 @@ python ui2html_training.py
 ### 交互式使用（测试/开发）
 ```bash
 srun --gres=gpu:1 --pty --time=02:00:00 --mem=60G bash
+srun --partition=debug --gres=gpu:1 --pty --time=00:30:00 --mem=60G bash
 ```
 
 ### 检查 CUDA 版本
