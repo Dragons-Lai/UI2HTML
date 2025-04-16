@@ -6,7 +6,6 @@ UI2HTML - 训练脚本
 """
 
 import json
-import os
 import random
 import numpy as np
 import torch
@@ -53,28 +52,59 @@ system_message = "You are an expert UI developer specializing in converting desi
 # 加载和预处理数据集
 def load_and_preprocess_dataset():
     print("开始加载和预处理数据集...")
-    # 加载Design2Code数据集
-    dataset_id = "SALT-NLP/Design2Code-hf"
-    full_dataset = load_dataset(dataset_id, split="train")
+    # 使用streaming模式加载webcode2m_purified数据集并限制数量
+    dataset_id = "xcodemind/webcode2m_purified"
+    MAX_SAMPLES = 100
     
-    # 定义HTML长度阈值
-    MAX_HTML_LENGTH = 12000
+    print(f"使用streaming模式加载数据集 '{dataset_id}' 并限制最多 {MAX_SAMPLES} 个样本...")
+    stream_dataset = load_dataset(dataset_id, split="train", streaming=True)
     
-    # 按HTML长度过滤函数
-    def filter_by_html_length(example):
-        return len(example["text"]) <= MAX_HTML_LENGTH
+    # 定义HTML长度阈值和筛选条件
+    MAX_HTML_LENGTH = 5000
+    MAX_TOKEN_COUNT = 1024
     
-    # 过滤数据集
-    filtered_indices = []
-    for i, example in enumerate(full_dataset):
-        if filter_by_html_length(example):
-            filtered_indices.append(i)
+    # 按HTML长度、语言和token总数过滤函数
+    def filter_dataset(example):
+        # 检查HTML长度
+        html_length_ok = len(example["text"]) <= MAX_HTML_LENGTH
+        
+        # 检查语言是否为英语
+        lang_ok = example.get("lang") == "en"
+        
+        # 检查token总数
+        tokens = example.get("tokens", [0, 0])
+        if isinstance(tokens, list) and len(tokens) == 2:
+            total_tokens = tokens[0] + tokens[1]  # CSS长度 + HTML长度
+            tokens_ok = total_tokens <= MAX_TOKEN_COUNT
+        else:
+            tokens_ok = False
+            
+        return html_length_ok and lang_ok and tokens_ok
     
-    # 创建过滤后的数据集
-    filtered_dataset = full_dataset.select(filtered_indices)
-    print(f"原始数据集大小: {len(full_dataset)}")
-    print(f"过滤后数据集大小: {len(filtered_dataset)}")
-    print(f"移除了 {len(full_dataset) - len(filtered_dataset)} 个HTML过长的示例")
+    # 过滤并收集数据
+    filtered_examples = []
+    sample_count = 0
+    total_checked = 0
+    
+    print("开始筛选数据...")
+    for example in stream_dataset:
+        total_checked += 1
+        if filter_dataset(example):
+            filtered_examples.append(example)
+            sample_count += 1
+            
+        if sample_count >= MAX_SAMPLES:
+            break
+        
+        if total_checked % 1000 == 0:
+            print(f"已检查 {total_checked} 个样本，已收集 {sample_count} 个符合条件的样本")
+    
+    print(f"共检查了 {total_checked} 个样本")
+    print(f"收集到 {sample_count} 个符合条件的样本")
+    
+    # 转换为正常数据集
+    from datasets import Dataset
+    filtered_dataset = Dataset.from_list(filtered_examples)
     
     # 将数据集分为训练集(80%)和测试集(20%)
     all_indices = list(range(len(filtered_dataset)))
@@ -151,6 +181,10 @@ def create_collate_fn(processor):
 # 训练模型
 def train_model(train_dataset):
     print("开始训练模型...")
+    # 清理CUDA缓存以释放内存
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
     # Hugging Face模型ID
     model_id = "Qwen/Qwen2-VL-7B-Instruct"
     
@@ -184,18 +218,18 @@ def train_model(train_dataset):
     # SFT配置
     args = SFTConfig(
         output_dir="qwen2-7b-instruct-ui2html",  # 保存目录和仓库ID
-        num_train_epochs=1,                      # 训练轮数
+        num_train_epochs=3,                      # 设为1，我们手动控制epoch
         per_device_train_batch_size=1,           # 每设备训练批次大小
-        gradient_accumulation_steps=1,           # 梯度累积步数
+        gradient_accumulation_steps=4,           # 梯度累积步数
         gradient_checkpointing=True,             # 使用梯度检查点以节省内存
         optim="adamw_torch_fused",               # 使用融合的adamw优化器
-        logging_steps=1,                          # 每1步记录一次日志
-        save_strategy="epoch",                    # 每个轮次保存一次检查点
-        learning_rate=2e-4,                      # 学习率
+        logging_steps=1,                         # 每1步记录一次日志
+        save_strategy="epoch",                   # 每个轮次保存一次检查点
+        learning_rate=2e-5,                      # 学习率
         bf16=True,                               # 使用bfloat16精度
         tf32=True,                               # 使用tf32精度
         max_grad_norm=0.3,                       # 最大梯度范数
-        warmup_ratio=0.03,                       # 预热比例
+        warmup_ratio=0.05,                       # 预热比例
         lr_scheduler_type="constant",            # 使用常量学习率调度器
         push_to_hub=True,                        # 推送模型到hub
         report_to="tensorboard",                 # 将指标报告给tensorboard
