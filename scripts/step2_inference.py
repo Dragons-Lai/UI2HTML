@@ -15,6 +15,7 @@ from tqdm import tqdm
 import time
 import zipfile
 from huggingface_hub import HfApi, login
+from peft import PeftModel
 
 # 系统消息和提示
 prompt = """Convert the provided UI screenshot into clean, semantic HTML code with inline CSS.
@@ -46,12 +47,16 @@ def load_models():
 
 # 从图片生成HTML
 def generate_html(image, model, processor):
+    # 打印当前使用的模型类型
+    print(f"生成HTML使用的模型类型: {type(model)}")
+    print(f"模型是否有PEFT配置: {hasattr(model, 'peft_config')}")
+    
     # 创建消息
     messages = [
         {"role": "system", "content": [{"type": "text", "text": system_message}]},
         {"role": "user", "content": [
-            {"type": "image", "image": image},
             {"type": "text", "text": prompt},
+            {"type": "image", "image": image},
         ]},
     ]
 
@@ -69,16 +74,19 @@ def generate_html(image, model, processor):
     )
     inputs = inputs.to(model.device)
 
+    # 打印输入信息
+    print(f"推理输入形状: {inputs.input_ids.shape}")
+    
     # 生成输出
     max_tokens = 1024
 
+    print("开始生成...")
     generated_ids = model.generate(
         **inputs,
         max_new_tokens=max_tokens,
-        top_p=0.9,
-        do_sample=True,
-        temperature=0.7
+        do_sample=False
     )
+    print("生成完成")
 
     generated_ids_trimmed = [out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)]
     output_text = processor.batch_decode(
@@ -114,21 +122,67 @@ def extract_html(text):
 # 加载测试数据集
 def load_test_dataset():
     print("加载测试数据集...")
-    # 加载Design2Code数据集
-    dataset_id = "SALT-NLP/Design2Code-hf"
-    full_dataset = load_dataset(dataset_id, split="train")
+    # 使用与训练相同的数据集 (webcode2m_purified)
+    dataset_id = "xcodemind/webcode2m_purified"
     
-    # 加载测试索引
+    # 检查是否存在测试索引文件
+    test_indices_file = "test_indices.json"
+    
     try:
-        with open("test_indices.json", "r") as f:
+        with open(test_indices_file, "r") as f:
             test_indices = json.load(f)["test_indices"]
         
-        # 创建测试数据集
-        test_dataset = full_dataset.select(test_indices)
-        print(f"测试集大小: {len(test_dataset)}")
+        print(f"成功加载测试索引，共有 {len(test_indices)} 个样本")
+    except Exception as e:
+        print(f"加载测试索引时出错: {e}")
+        return None
+    
+    try:
+        # 使用流式加载数据集
+        print(f"使用流式加载数据集 '{dataset_id}'...")
+        stream_dataset = load_dataset(dataset_id, split="train", streaming=True)
+        
+        # 创建一个测试数据集
+        from datasets import Dataset
+        test_samples = []
+        
+        # 记录已处理的样本数量和找到的测试样本数量
+        processed_count = 0
+        found_count = 0
+        
+        # 对于流式数据集，我们需要遍历并找到匹配test_indices的样本
+        print("筛选测试样本...")
+        
+        # 将test_indices转换为集合以便快速查找
+        test_indices_set = set(test_indices)
+        
+        # 遍历流式数据集
+        for example in stream_dataset:
+            if processed_count in test_indices_set:
+                test_samples.append(example)
+                found_count += 1
+                
+                # 如果找到所有测试样本，可以提前结束
+                if found_count == len(test_indices):
+                    break
+                
+                # 每找到10个样本打印一次进度
+                if found_count % 10 == 0:
+                    print(f"已找到 {found_count}/{len(test_indices)} 个测试样本")
+            
+            processed_count += 1
+            
+            # 每处理1000个样本打印一次进度
+            if processed_count % 1000 == 0:
+                print(f"已处理 {processed_count} 个样本，找到 {found_count}/{len(test_indices)} 个测试样本")
+        
+        # 将收集的样本转换为正常数据集
+        test_dataset = Dataset.from_list(test_samples)
+        print(f"测试集大小: {len(test_dataset)} 个样本")
+        
         return test_dataset
-    except FileNotFoundError:
-        print("未找到test_indices.json文件。请先运行训练脚本生成测试索引。")
+    except Exception as e:
+        print(f"加载或处理数据集时出错: {e}")
         return None
 
 # 加载HuggingFace令牌
@@ -143,12 +197,19 @@ def load_hf_token():
 # 进行基础模型推理
 def run_base_model_inference(model, processor, test_dataset):
     print("使用基础模型进行推理...")
+    print(f"基础模型类型: {type(model)}")
+    print(f"基础模型是否有适配器: {hasattr(model, 'peft_config')}")
+    
+    # 确保模型处于评估模式
+    model.eval()
+    print(f"模型评估模式: {model.training == False}")
+    
     os.makedirs("test_results", exist_ok=True)
     os.makedirs("test_results/original", exist_ok=True)
     os.makedirs("test_results/base_model", exist_ok=True)
     
     # 处理测试子集
-    max_test_samples = min(len(test_dataset), 50)  # 根据资源调整
+    max_test_samples = min(len(test_dataset), 500)  # 根据资源调整
     test_subset = test_dataset.select(range(max_test_samples))
     
     base_outputs = []
@@ -166,6 +227,7 @@ def run_base_model_inference(model, processor, test_dataset):
                 original_image.save(original_path)
             
             # 使用基础模型生成HTML
+            print(f"\n处理样本 {i} 使用基础模型生成HTML")
             base_html_raw = generate_html(original_image, model, processor)
             base_html = extract_html(base_html_raw)
             
@@ -203,7 +265,62 @@ def run_base_model_inference(model, processor, test_dataset):
 # 进行微调模型推理
 def run_finetuned_model_inference(model, processor, adapter_path, base_outputs):
     print("加载适配器以创建微调模型...")
-    model.load_adapter(adapter_path)
+    
+    # 检查适配器路径是否存在
+    print(f"适配器路径: {adapter_path}")
+    if not os.path.exists(adapter_path):
+        print(f"警告: 适配器路径 {adapter_path} 不存在!")
+    else:
+        print(f"适配器路径存在!")
+        # for file in os.listdir(adapter_path):
+        #     file_path = os.path.join(adapter_path, file)
+        #     if os.path.isdir(file_path):
+        #         print(f"  - {file}/ (目录)")
+        #     else:
+        #         print(f"  - {file} ({os.path.getsize(file_path)} 字节)")
+    
+    # 打印加载前的参数数量和模型状态
+    base_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"基础模型可训练参数数量: {base_params}")
+    print(f"适配器加载前模型类型: {type(model)}")
+    print(f"基础模型是否已有适配器: {hasattr(model, 'peft_config')}")
+    
+    # 加载适配器
+    model = PeftModel.from_pretrained(model, adapter_path)
+    print("使用PeftModel.from_pretrained成功加载适配器")
+
+    # 打印加载后的参数数量
+    ft_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"加载适配器后可训练参数数量: {ft_params}")
+    
+    # 打印模型状态信息，确认适配器是否正确加载
+    print(f"适配器是否已加载: {hasattr(model, 'peft_config')}")
+    if hasattr(model, 'peft_config'):
+        print(f"PEFT配置: {model.peft_config}")
+        # 修复配置访问方式
+        if hasattr(model.peft_config, 'target_modules'):
+            print(f"PEFT配置中的target_modules: {model.peft_config.target_modules}")
+        else:
+            # 对于多配置的情况
+            if hasattr(model.peft_config, 'default'):
+                print(f"PEFT默认配置: {model.peft_config.default}")
+                if hasattr(model.peft_config.default, 'target_modules'):
+                    print(f"PEFT配置中的target_modules: {model.peft_config.default.target_modules}")
+        
+        try:
+            if hasattr(model, 'state_dict'):
+                print(f"适配器模块信息: {list(model.state_dict().keys())[:10]} ...")
+                # 检查是否有LoRA权重
+                lora_weights = [k for k in model.state_dict().keys() if 'lora' in k.lower()]
+                print(f"发现LoRA权重的数量: {len(lora_weights)}")
+                if lora_weights:
+                    print(f"LoRA权重示例: {lora_weights[:5]}")
+        except Exception as e:
+            print(f"获取模型状态字典时出错: {e}")
+    
+    # 确保模型处于评估模式
+    model.eval()
+    print(f"模型评估模式: {model.training == False}")
     
     os.makedirs("test_results/fine_tuned_model", exist_ok=True)
     
@@ -333,14 +450,46 @@ if __name__ == "__main__":
     
     # 加载模型和测试数据集
     base_model, processor, adapter_path = load_models()
+    
+    # 加载测试数据集
     test_dataset = load_test_dataset()
     
     if test_dataset is not None:
+        print(f"成功加载测试数据集，共 {len(test_dataset)} 个样本")
+        
         # 运行基础模型推理
         base_outputs = run_base_model_inference(base_model, processor, test_dataset)
         
+        if not base_outputs:
+            print("基础模型推理没有产生有效输出，脚本终止")
+            exit(1)
+        
         # 运行微调模型推理
         ft_results = run_finetuned_model_inference(base_model, processor, adapter_path, base_outputs)
+        
+        if not ft_results:
+            print("微调模型推理没有产生有效输出，脚本终止")
+            exit(1)
+        
+        # 比较输出结果
+        print("比较基础模型和微调模型输出...")
+        for i, base_output in enumerate(base_outputs):
+            if base_output is None:
+                continue
+                
+            sample_id = base_output['sample_id']
+            # 找到对应的微调结果
+            ft_item = next((item for item in ft_results if item['sample_id'] == sample_id), None)
+            
+            if ft_item:
+                base_html = base_output['base_html']
+                ft_html = ft_item['ft_html']
+                
+                # 比较输出是否相同
+                if base_html == ft_html:
+                    print(f"警告: 样本 {sample_id} 基础模型和微调模型输出完全相同!")
+                else:
+                    print(f"样本 {sample_id} 基础模型和微调模型输出不同")
         
         # 创建元数据文件
         metadata = {
