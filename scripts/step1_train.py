@@ -86,11 +86,15 @@ def load_and_preprocess_dataset():
     sample_count = 0
     total_checked = 0
     
+    # 记录每个过滤后样本在原始数据集中的索引
+    original_indices = []
+    
     print("开始筛选数据...")
     for example in stream_dataset:
         total_checked += 1
         if filter_dataset(example):
             filtered_examples.append(example)
+            original_indices.append(total_checked - 1)  # 记录原始数据集中的索引
             sample_count += 1
             
         if sample_count >= MAX_SAMPLES:
@@ -108,19 +112,25 @@ def load_and_preprocess_dataset():
     
     # 将数据集分为训练集(80%)和测试集(20%)
     all_indices = list(range(len(filtered_dataset)))
-    train_indices, test_indices = train_test_split(all_indices, test_size=0.2, random_state=seed)
+    train_indices_local, test_indices_local = train_test_split(all_indices, test_size=0.2, random_state=seed)
+    
+    # 将本地索引映射回原始数据集的索引
+    test_indices = [original_indices[i] for i in test_indices_local]
     
     # 创建训练集和测试集
-    train_dataset_raw = filtered_dataset.select(train_indices)
-    test_dataset_raw = filtered_dataset.select(test_indices)
+    train_dataset_raw = filtered_dataset.select(train_indices_local)
+    test_dataset_raw = filtered_dataset.select(test_indices_local)
     
     print(f"训练集大小: {len(train_dataset_raw)}")
     print(f"测试集大小: {len(test_dataset_raw)}")
     
-    # 将结果保存为JSON以便后续使用
-    test_indices_file = "test_indices.json"
-    with open(test_indices_file, "w") as f:
+    with open("test_indices.json", "w") as f:
         json.dump({"test_indices": test_indices}, f)
+    
+    print(f"训练和测试索引已保存到 test_indices.json")
+    
+    # 保存过滤后的完整数据集（可选）
+    # filtered_dataset.save_to_disk("filtered_dataset")
     
     return train_dataset_raw, test_dataset_raw
 
