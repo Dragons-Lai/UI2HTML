@@ -10,7 +10,7 @@ conda env create -f environment.yml
 # Activate the environment
 conda activate ui2html
 
-# 安裝 huggingface-cli（一定要）
+# Install huggingface-cli
 pip install 'huggingface_hub[cli,torch]'
 
 echo "Environment setup complete!"

@@ -1,83 +1,69 @@
 # UI2HTML
 
-UI2HTML 是一个用于将用户界面转换为 HTML 的项目。
+## Introduction
+UI2HTML leverages the Qwen/Qwen2-VL-7B-Instruct model, combined with LoRA technology, to perform efficient training and inference using 4-bit quantization during Supervised Fine Tuning. By inputting web screenshot (image), the model outputs the corresponding HTML code (text), automating the conversion from UI design to web layout. During the inference phase, the CLIP model is used to evaluate the visual similarity of the generated results, comparing the output quality between base model and fine-tuned model. 🌟
 
-## 目录
-- [快速开始](#快速开始)
-- [使用方法](#使用方法)
-- [GPU 资源使用](#gpu-资源使用)
-- [常见问题](#常见问题)
+## Table of Contents
+- [Quick Start](#quick-start)
+- [Usage](#usage)
+- [GPU Resource Usage](#gpu-resource-usage)
+- [FAQ](#faq)
 
-## 快速开始
+## Quick Start 🚀
 
-### 一键安装（推荐）
+You need to manually create a file named `hf_token.txt` in the root directory of the project. This file should contain your Hugging Face token with write access. Make sure to keep this token secure and do not share it publicly.
+
+### One-Click Installation
 ```bash
-# 给脚本添加执行权限
+# Add execution permission to the script
 chmod +x setup_env.sh
 
-# 运行安装脚本
+# Run the installation script
 ./setup_env.sh
 ```
-脚本会自动完成以下操作：
-1. 创建并配置 conda 环境
-2. 安装所需依赖
-<!-- 3. 配置 Hugging Face 登录 -->
+The script will automatically complete the following operations:
+1. Create and configure the conda environment
+2. Install required dependencies
 
-### 手动安装（如需要）
-如果自动安装出现问题，您也可以按照以下步骤手动安装：
+## Usage
 
-1. 创建并激活环境
+### Environment Management
 ```bash
-conda env create -f environment.yml
-conda activate ui2html
-```
-
-2. 安装额外依赖
-```bash
-pip install 'huggingface_hub[cli,torch]'
-```
-
-3. 登录 Hugging Face
-```bash
-huggingface-cli login
-```
-
-## 使用方法
-
-### 环境管理
-```bash
-# 激活环境
+# Activate environment
 conda activate ui2html
 
-# 退出环境
+# Exit environment
 conda deactivate
 
-# 移除环境（如需要）
+# Remove environment (if needed)
 conda remove --name ui2html --all
 ```
 
-### 运行训练
+### Running scripts
 ```bash
-# 使用 SLURM 提交作业
-sbatch submit_job.slurm
-
-# 或直接运行
-python ui2html_training.py
+python scripts/step1_train.py
+python scripts/step2_inference.py
 ```
 
-## GPU 资源使用
+Note: The script `scripts/step3_statistics.ipynb` is runned in Colab notebook via this link: [Colab Link (For Visualization)](https://colab.research.google.com/drive/1--a2JUkBlN3Z26g1gaT_EglNLNuZJ6ZY?usp=sharing)
 
-### 交互式使用（测试/开发）
+## GPU Resource Usage 💻
+
+### Interactive Usage (Testing/Development)
 ```bash
 srun --gres=gpu:1 --pty --time=02:00:00 --mem=60G bash
 srun --partition=debug --gres=gpu:1 --pty --time=00:30:00 --mem=60G bash
 ```
 
-### 检查 CUDA 版本
+### Check CUDA Version
 ```bash
-# 系统 CUDA 版本
+# System CUDA version
 nvidia-smi
 
-# PyTorch CUDA 版本
+# PyTorch CUDA version
 python -c "import torch; print(torch.version.cuda)"
 ```
+
+## Contribution 🤝
+
+We welcome contributions of any kind! Please check our contribution guidelines to learn how to participate in the project.
